@@ -1,0 +1,6 @@
+# Fixed query set for the golden eval (PRD Section 6).
+# Expected rankings for each query live in expected.yaml, keyed by the
+# same query string.
+queries:
+  - "OAuth token refresh"
+  - "how does riffle decide what to re-embed on reindex"

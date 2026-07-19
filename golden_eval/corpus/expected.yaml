@@ -1,0 +1,12 @@
+# Expected result rankings per query, true by construction: each note
+# under golden_eval/corpus/notes/ was hand-authored to be either the top
+# match, a same-topic-wrong-facet distractor, or an unrelated note for a
+# given query. No separate judging pass — see CONTEXT.md's "Golden eval
+# corpus" and "Distractor" entries.
+rankings:
+  "OAuth token refresh":
+    - oauth-token-refresh.md
+    - oauth-scopes-and-consent.md
+  "how does riffle decide what to re-embed on reindex":
+    - reindex-merkle-hashing.md
+    - vector-index-overview.md
