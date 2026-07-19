@@ -13,9 +13,11 @@
 // to onnx_test's pure-Go BGE-small path (puregoadapter). Passing
 // -onnx-model and -onnx-lib (with -tokenizer) switches it to onnx_test's
 // ONNX Runtime path (onnxadapter), the reference every other spike's
-// timing is compared against. The two real adapters are mutually
-// exclusive in a single run — this CLI benchmarks one embedder at a
-// time, unlike the golden eval CLI's comparison mode.
+// timing is compared against. Passing -sidecar-binary and -sidecar-model
+// (with -tokenizer) switches it to Spike 3's Rust sidecar
+// (sidecaradapter). The three real adapters are mutually exclusive in a
+// single run — this CLI benchmarks one embedder at a time, unlike the
+// golden eval CLI's comparison mode.
 package main
 
 import (
@@ -52,6 +54,10 @@ func run() error {
 		"path to onnx_test's model.onnx; set together with -onnx-lib and -tokenizer to use the ONNX reference adapter (env: GOLDENEVAL_ONNX_MODEL_PATH)")
 	onnxLibPath := flag.String("onnx-lib", os.Getenv("GOLDENEVAL_ONNX_LIB_PATH"),
 		"path to the ONNX Runtime shared library, e.g. libonnxruntime.dylib (env: GOLDENEVAL_ONNX_LIB_PATH)")
+	sidecarBinaryPath := flag.String("sidecar-binary", os.Getenv("GOLDENEVAL_SIDECAR_BINARY_PATH"),
+		"path to the compiled spike3_rust_sidecar binary; set together with -sidecar-model and -tokenizer to use the sidecar adapter (env: GOLDENEVAL_SIDECAR_BINARY_PATH)")
+	sidecarModelPath := flag.String("sidecar-model", os.Getenv("GOLDENEVAL_SIDECAR_MODEL_PATH"),
+		"path to onnx_test's model.onnx, passed through to the sidecar binary (env: GOLDENEVAL_SIDECAR_MODEL_PATH)")
 	flag.Parse()
 
 	corpus, err := generateCorpus(*mode, *seed)
@@ -60,10 +66,12 @@ func run() error {
 	}
 
 	embedder, constructionDuration, closeEmbedder, err := buildEmbedder(embedderFlags{
-		tokenizerPath: *tokenizerPath,
-		modelPath:     *modelPath,
-		onnxModelPath: *onnxModelPath,
-		onnxLibPath:   *onnxLibPath,
+		tokenizerPath:     *tokenizerPath,
+		modelPath:         *modelPath,
+		onnxModelPath:     *onnxModelPath,
+		onnxLibPath:       *onnxLibPath,
+		sidecarBinaryPath: *sidecarBinaryPath,
+		sidecarModelPath:  *sidecarModelPath,
 	})
 	if err != nil {
 		return fmt.Errorf("selecting embedder: %w", err)
