@@ -4,13 +4,17 @@
 // With no flags, it runs against a placeholder stub embedder (a
 // deterministic bag-of-words hash) purely to smoke-test the pipeline.
 // Passing -model (with -tokenizer) switches it to onnx_test's pure-Go
-// BGE-small path (puregoadapter). Passing -onnx-model and -onnx-lib
-// (with -tokenizer) switches it to onnx_test's ONNX Runtime path
-// (onnxadapter), the reference every other spike is compared against.
-// Passing both switches to a comparison run: the pure-Go adapter's
-// rankings, plus its per-note cosine similarity against the ONNX
-// adapter's output as reference — printed as an extra table alongside
-// the ranking metrics.
+// BGE-small path (puregoadapter). Passing -sidecar-binary and
+// -sidecar-model (with -tokenizer) switches it to Spike 3's Rust
+// sidecar (sidecaradapter) — mutually exclusive with -model, since only
+// one subject adapter runs per invocation. Passing -onnx-model and
+// -onnx-lib (with -tokenizer) switches it to onnx_test's ONNX Runtime
+// path (onnxadapter), the reference every other spike is compared
+// against. Passing the ONNX flags together with either -model or
+// -sidecar-binary/-sidecar-model switches to a comparison run: the
+// subject adapter's rankings, plus its per-note cosine similarity
+// against the ONNX adapter's output as reference — printed as an extra
+// table alongside the ranking metrics.
 package main
 
 import (
@@ -46,6 +50,10 @@ func run() error {
 		"path to onnx_test's model.onnx; set together with -onnx-lib and -tokenizer to use the ONNX reference adapter (env: GOLDENEVAL_ONNX_MODEL_PATH)")
 	onnxLibPath := flag.String("onnx-lib", os.Getenv("GOLDENEVAL_ONNX_LIB_PATH"),
 		"path to the ONNX Runtime shared library, e.g. libonnxruntime.dylib (env: GOLDENEVAL_ONNX_LIB_PATH)")
+	sidecarBinaryPath := flag.String("sidecar-binary", os.Getenv("GOLDENEVAL_SIDECAR_BINARY_PATH"),
+		"path to the compiled spike3_rust_sidecar binary; set together with -sidecar-model and -tokenizer to use the sidecar adapter, mutually exclusive with -model (env: GOLDENEVAL_SIDECAR_BINARY_PATH)")
+	sidecarModelPath := flag.String("sidecar-model", os.Getenv("GOLDENEVAL_SIDECAR_MODEL_PATH"),
+		"path to onnx_test's model.onnx, passed through to the sidecar binary (env: GOLDENEVAL_SIDECAR_MODEL_PATH)")
 	flag.Parse()
 
 	corpus, err := goldeneval.LoadCorpus(*corpusDir)
@@ -54,10 +62,12 @@ func run() error {
 	}
 
 	report, err := buildReport(context.Background(), corpus, embedderFlags{
-		tokenizerPath: *tokenizerPath,
-		modelPath:     *modelPath,
-		onnxModelPath: *onnxModelPath,
-		onnxLibPath:   *onnxLibPath,
+		tokenizerPath:     *tokenizerPath,
+		modelPath:         *modelPath,
+		onnxModelPath:     *onnxModelPath,
+		onnxLibPath:       *onnxLibPath,
+		sidecarBinaryPath: *sidecarBinaryPath,
+		sidecarModelPath:  *sidecarModelPath,
 	})
 	if err != nil {
 		return fmt.Errorf("running golden eval: %w", err)

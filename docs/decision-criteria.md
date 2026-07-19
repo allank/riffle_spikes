@@ -6,7 +6,7 @@ One row per spike, filled in as each completes, so the final choice is a table r
 |---|---|---|---|---|---|---|---|---|
 | Golden eval baseline (ONNX reference) | 7.6 | cold 98.8ms / warm 120.8ms | 821.3ms | | | | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `onnxadapter`) | |
 | Spike 2 — pure Go | 0.6 | cold 794.1ms / warm 1471.9ms¹ | 1186.6ms | | | | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `puregoadapter`); cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes | |
-| Spike 3 — Rust sidecar (tract/candle) | | | | | | | | |
+| Spike 3 — Rust sidecar (tract/candle) | | | | | | | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `sidecaradapter`/`tract`); cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes | |
 
 Throughput/latency/cold-start numbers: `spike2_measure/cmd/measure` against the real 1,000-chunk generated corpus (`spike2_measure.GenerateCorpus`, seed 42; chunks 50–400 words, averaging ~225), using onnx_test's local `model.onnx`/`model.safetensors` + `tokenizer.json` (+ `libonnxruntime.dylib` for ONNX). Throughput ratio (ONNX 7.6 / pure-Go 0.6 ≈ 12.7x) is consistent with ADR-0002's addendum (~10-13x after the raw-slice optimization), now measured against realistic chunk lengths rather than short test sentences.
 
