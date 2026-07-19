@@ -7,6 +7,7 @@ import (
 
 	"github.com/allank/riffle_spikes/golden_eval/adapters/onnxadapter"
 	"github.com/allank/riffle_spikes/golden_eval/adapters/puregoadapter"
+	"github.com/allank/riffle_spikes/internal/stubembedder"
 
 	goldeneval "github.com/allank/riffle_spikes/golden_eval"
 )
@@ -60,7 +61,7 @@ func buildReport(ctx context.Context, corpus goldeneval.Corpus, f embedderFlags)
 		return goldeneval.Run(ctx, corpus, adapter, nil)
 
 	default:
-		return goldeneval.Run(ctx, corpus, stubEmbedder{}, nil)
+		return goldeneval.Run(ctx, corpus, stubembedder.Embedder{}, nil)
 	}
 }
 
