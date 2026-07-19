@@ -21,9 +21,15 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    // CPU only for now — device selection (CANDLE_DEVICE, adding a
-    // Metal option) is a separate follow-up ticket.
-    let embedder = match Embedder::load(&args.model, &args.tokenizer, Device::Cpu) {
+    let device = match select_device() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("selecting device: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let embedder = match Embedder::load(&args.model, &args.tokenizer, device) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("failed to load model/tokenizer: {e}");
@@ -59,6 +65,28 @@ fn main() {
         if writeln!(out, "{encoded}").is_err() || out.flush().is_err() {
             break;
         }
+    }
+}
+
+/// Reads the CANDLE_DEVICE environment variable: "metal" constructs a
+/// Metal device, unset keeps the CPU default. No CLI flag — the
+/// sidecar adapter and both Go CLIs it's wired into need zero changes,
+/// since os/exec already passes the parent process's environment
+/// through to this spawned child.
+fn select_device() -> candle_core::Result<Device> {
+    match std::env::var("CANDLE_DEVICE") {
+        Ok(v) if v == "metal" => Device::new_metal(0),
+        Ok(v) => {
+            // Set but not recognized (e.g. a typo like "Metal" or
+            // "mps") — warn rather than silently falling back to CPU,
+            // so a misconfiguration doesn't masquerade as a real CPU
+            // measurement.
+            eprintln!(
+                "CANDLE_DEVICE={v:?} not recognized, falling back to CPU (only \"metal\" selects Metal)"
+            );
+            Ok(Device::Cpu)
+        }
+        Err(_) => Ok(Device::Cpu),
     }
 }
 
