@@ -28,4 +28,20 @@ The table above measures index-time chunk latency (50–400 words). The PRD's ow
 
 The sidecar's *warm* query latency (18.4ms) beats pure Go and comfortably meets the goal — but its very first query after the process starts pays the same ~700ms–1s warmup cost documented in the index-time table above (footnote ²), which the <100ms goal's own "including model load amortisation" wording doesn't obviously cover for a cost this large or one that's separate from model load itself. Not a blocker for a long-lived indexing process, but a real consideration for the sidecar's query-time UX if it were ever spawned fresh per query rather than kept warm.
 
-³ Two of three query-mode runs landed at ~750ms cold / ~18ms warm; one outlier run hit 1.25s cold (likely first-time disk-cache miss loading the 127MB `model.onnx` file in that session). ~750ms is the more representative steady-state number; the underlying cause (tract's first-`.run()` warmup, not disk I/O) is the same either way — see footnote ².
+³ Two of three query-mode runs landed at ~750ms cold / ~18ms warm; one outlier run hit 1.25s cold. See the repeat-invocation section below for why: that first run was genuinely disk-cold in a way the other two weren't, but disk-cache warming only explains part of the gap — see below for the full picture.
+
+## Repeat-invocation caching: ONNX benefits, tract mostly doesn't
+
+All numbers above come from single fresh CLI invocations. A real question (raised after reviewing the results): does "cold start" mean something different across *separate* process invocations, once the OS has already read a given model file once? Checked by running the ONNX query-mode benchmark three times as fresh, separate `go run` invocations back to back:
+
+| Run | Latency (cold) | Cold start | Implied construction time (cold start − latency cold) |
+|---|---|---|---|
+| 1 (first ever) | 8.6ms | 641.8ms | ~633ms |
+| 2 | 5.0ms | 372.4ms | ~367ms |
+| 3 | 5.2ms | 367.3ms | ~362ms |
+
+**ONNX's construction time (session creation, which reads the 127MB `model.onnx` file) drops by ~40% after the first invocation and then plateaus** — consistent with the OS page cache keeping the file's blocks in RAM across separate processes. The embed call itself (`LatencyCold`) was already small and stable throughout; the entire improvement is in construction.
+
+Contrast with tract's own three query-mode runs (footnote ³ above): 1.25s → 750ms → 748ms. Unlike ONNX, tract's `ColdStart ≈ LatencyCold` in every run — construction was already near-zero from the start (footnote ²), so there's no construction-time component for page-caching to speed up. The drop from run 1 to run 2 (1.25s → 750ms) is plausibly a smaller, secondary page-cache effect on top of tract's own first-`.run()` setup cost, but that setup cost itself doesn't go away — it plateaus at ~750ms rather than continuing toward something ONNX-like.
+
+**Net effect: ONNX's real advantage over tract on cold start is larger than the headline numbers already suggested.** A CLI invoked repeatedly through a work session would mostly see ONNX's cached ~370ms construction cost, not its first-ever 642ms — while tract's ~700–750ms first-call cost doesn't have an equivalent discount. This reinforces, rather than changes, the sidecar-lifecycle conclusion already drawn: a long-lived process (paying tract's setup cost once, ever) remains the right architecture regardless of this caching effect, since it makes the per-invocation question moot in production use.
