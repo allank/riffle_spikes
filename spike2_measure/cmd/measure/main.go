@@ -1,6 +1,12 @@
 // Command measure runs the Spike 2 benchmark (PRD Section 7: throughput,
 // latency, cold start) against an Embedder and prints a results table.
 //
+// -mode selects the corpus shape: "index" (default) benchmarks
+// note-chunk-length text (50-400 words, GenerateCorpus); "query"
+// benchmarks short search-query-length text (2-15 words,
+// GenerateQueryCorpus) — the shape the PRD's <100ms query-time latency
+// goal is actually about, distinct from indexing throughput.
+//
 // With no flags, it runs against a placeholder stub embedder (the same
 // deterministic bag-of-words hash the golden eval CLI uses) purely to
 // smoke-test the pipeline. Passing -model (with -tokenizer) switches it
@@ -36,6 +42,8 @@ func main() {
 // function that returns normally first.
 func run() error {
 	seed := flag.Int64("seed", 42, "seed for the deterministic benchmark corpus generator")
+	mode := flag.String("mode", "index",
+		"'index' benchmarks note-chunk-length text (50-400 words); 'query' benchmarks short search-query-length text (2-15 words), to measure the PRD's query-time latency goal specifically")
 	tokenizerPath := flag.String("tokenizer", os.Getenv("GOLDENEVAL_TOKENIZER_PATH"),
 		"path to onnx_test's tokenizer.json, shared by both real adapters below (env: GOLDENEVAL_TOKENIZER_PATH)")
 	modelPath := flag.String("model", os.Getenv("GOLDENEVAL_MODEL_PATH"),
@@ -46,7 +54,10 @@ func run() error {
 		"path to the ONNX Runtime shared library, e.g. libonnxruntime.dylib (env: GOLDENEVAL_ONNX_LIB_PATH)")
 	flag.Parse()
 
-	corpus := spike2measure.GenerateCorpus(*seed)
+	corpus, err := generateCorpus(*mode, *seed)
+	if err != nil {
+		return err
+	}
 
 	embedder, constructionDuration, closeEmbedder, err := buildEmbedder(embedderFlags{
 		tokenizerPath: *tokenizerPath,
@@ -66,6 +77,17 @@ func run() error {
 
 	printReport(report)
 	return nil
+}
+
+func generateCorpus(mode string, seed int64) ([]string, error) {
+	switch mode {
+	case "index":
+		return spike2measure.GenerateCorpus(seed), nil
+	case "query":
+		return spike2measure.GenerateQueryCorpus(seed), nil
+	default:
+		return nil, fmt.Errorf("-mode must be 'index' or 'query', got %q", mode)
+	}
 }
 
 func printReport(report spike2measure.Report) {
