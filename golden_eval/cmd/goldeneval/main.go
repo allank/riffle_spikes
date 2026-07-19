@@ -7,9 +7,10 @@
 // BGE-small path (puregoadapter). Passing -onnx-model and -onnx-lib
 // (with -tokenizer) switches it to onnx_test's ONNX Runtime path
 // (onnxadapter), the reference every other spike is compared against.
-// The two real adapters are mutually exclusive in a single run — see
-// riffle_spikes#1's remaining ticket for a comparison mode that runs
-// both together.
+// Passing both switches to a comparison run: the pure-Go adapter's
+// rankings, plus its per-note cosine similarity against the ONNX
+// adapter's output as reference — printed as an extra table alongside
+// the ranking metrics.
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"text/tabwriter"
 
 	goldeneval "github.com/allank/riffle_spikes/golden_eval"
@@ -29,11 +31,11 @@ func main() {
 	}
 }
 
-// run does the actual work, as opposed to main, so that a deferred
-// closeEmbedder() (which releases the ONNX adapter's session) always
-// executes before the process exits — main's log.Fatal calls os.Exit,
-// which skips deferred functions, so cleanup must happen inside a
-// function that returns normally first.
+// run does the actual work, as opposed to main, so that any deferred
+// cleanup inside buildReport (which releases the ONNX adapter's
+// session) always executes before the process exits — main's log.Fatal
+// calls os.Exit, which skips deferred functions, so cleanup must happen
+// inside a function that returns normally first.
 func run() error {
 	corpusDir := flag.String("corpus", "golden_eval/corpus", "path to the golden eval corpus directory")
 	tokenizerPath := flag.String("tokenizer", os.Getenv("GOLDENEVAL_TOKENIZER_PATH"),
@@ -51,18 +53,12 @@ func run() error {
 		return fmt.Errorf("loading corpus: %w", err)
 	}
 
-	embedder, closeEmbedder, err := selectEmbedder(embedderFlags{
+	report, err := buildReport(context.Background(), corpus, embedderFlags{
 		tokenizerPath: *tokenizerPath,
 		modelPath:     *modelPath,
 		onnxModelPath: *onnxModelPath,
 		onnxLibPath:   *onnxLibPath,
 	})
-	if err != nil {
-		return fmt.Errorf("selecting embedder: %w", err)
-	}
-	defer closeEmbedder()
-
-	report, err := goldeneval.Run(context.Background(), corpus, embedder)
 	if err != nil {
 		return fmt.Errorf("running golden eval: %w", err)
 	}
@@ -80,4 +76,20 @@ func printReport(report goldeneval.Report) {
 		fmt.Fprintf(w, "%s\t%.4f\t%.4f\n", q.Query, q.NDCG, q.MRR)
 	}
 	fmt.Fprintf(w, "AGGREGATE\t%.4f\t%.4f\n", report.AggregateNDCG, report.AggregateMRR)
+
+	if len(report.CosineSimilarity) == 0 {
+		return
+	}
+
+	noteIDs := make([]string, 0, len(report.CosineSimilarity))
+	for id := range report.CosineSimilarity {
+		noteIDs = append(noteIDs, id)
+	}
+	sort.Strings(noteIDs)
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "NOTE\tCOSINE SIMILARITY (vs ONNX reference)")
+	for _, id := range noteIDs {
+		fmt.Fprintf(w, "%s\t%.6f\n", id, report.CosineSimilarity[id])
+	}
 }

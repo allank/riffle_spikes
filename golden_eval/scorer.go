@@ -21,26 +21,28 @@ type Report struct {
 	AggregateNDCG float64
 	AggregateMRR  float64
 
-	// CosineSimilarity is per-note cosine similarity against a reference
-	// embedder's output. Left nil by Run; populated by a later
-	// comparison-mode run against a reference vector set.
+	// CosineSimilarity is per-note cosine similarity between embedder's
+	// output and a reference vector set, keyed by note ID. Nil unless
+	// Run was called with a non-nil reference.
 	CosineSimilarity map[string]float64
 }
 
 // Run embeds every corpus note and query with embedder, ranks notes per
 // query by embedding similarity, and scores each ranking against
 // corpus.Expected using nDCG and MRR (PRD Section 6).
-func Run(ctx context.Context, corpus Corpus, embedder Embedder) (Report, error) {
-	noteTexts := make([]string, len(corpus.Notes))
-	for i, n := range corpus.Notes {
-		noteTexts[i] = n.Text
-	}
-	noteVectors, err := embedder.Embed(ctx, noteTexts)
+//
+// If reference is non-nil, Run also computes per-note cosine similarity
+// between embedder's note vectors and reference's vectors for the same
+// note ID, populating Report.CosineSimilarity — the harness's
+// numerical-drift check, since ranking metrics alone can mask or
+// amplify small vector-level drift. Build reference with
+// EmbedNotesByID against a reference-quality embedder (e.g. the ONNX
+// adapter). A note with no corresponding entry in reference is omitted
+// from CosineSimilarity rather than scored as 0.
+func Run(ctx context.Context, corpus Corpus, embedder Embedder, reference map[string][]float32) (Report, error) {
+	noteVectorsByID, err := EmbedNotesByID(ctx, corpus, embedder)
 	if err != nil {
-		return Report{}, fmt.Errorf("embedding notes: %w", err)
-	}
-	if len(noteVectors) != len(corpus.Notes) {
-		return Report{}, fmt.Errorf("embedder returned %d vectors for %d notes", len(noteVectors), len(corpus.Notes))
+		return Report{}, err
 	}
 
 	queryVectors, err := embedder.Embed(ctx, corpus.Queries)
@@ -55,7 +57,7 @@ func Run(ctx context.Context, corpus Corpus, embedder Embedder) (Report, error) 
 	var sumNDCG, sumMRR float64
 
 	for i, query := range corpus.Queries {
-		ranked := rankNotes(corpus.Notes, queryVectors[i], noteVectors)
+		ranked := rankNotes(corpus.Notes, queryVectors[i], noteVectorsByID)
 		relevance := relevanceGrades(corpus.Expected[query])
 
 		queryNDCG := ndcgScore(ranked, relevance)
@@ -71,12 +73,56 @@ func Run(ctx context.Context, corpus Corpus, embedder Embedder) (Report, error) 
 		report.AggregateMRR = sumMRR / float64(n)
 	}
 
+	if reference != nil {
+		report.CosineSimilarity = cosineSimilarityToReference(noteVectorsByID, reference)
+	}
+
 	return report, nil
+}
+
+// EmbedNotesByID embeds every corpus note with embedder, returning the
+// resulting vectors keyed by note ID. Used both by Run and by callers
+// building a reference vector set (e.g. from the ONNX adapter) to pass
+// into Run's comparison mode.
+func EmbedNotesByID(ctx context.Context, corpus Corpus, embedder Embedder) (map[string][]float32, error) {
+	noteTexts := make([]string, len(corpus.Notes))
+	for i, n := range corpus.Notes {
+		noteTexts[i] = n.Text
+	}
+
+	vectors, err := embedder.Embed(ctx, noteTexts)
+	if err != nil {
+		return nil, fmt.Errorf("embedding notes: %w", err)
+	}
+	if len(vectors) != len(corpus.Notes) {
+		return nil, fmt.Errorf("embedder returned %d vectors for %d notes", len(vectors), len(corpus.Notes))
+	}
+
+	byID := make(map[string][]float32, len(corpus.Notes))
+	for i, n := range corpus.Notes {
+		byID[n.ID] = vectors[i]
+	}
+	return byID, nil
+}
+
+// cosineSimilarityToReference computes, for each note ID present in
+// both subject and reference, the cosine similarity between their
+// vectors. A note present in only one of the two maps is omitted.
+func cosineSimilarityToReference(subject, reference map[string][]float32) map[string]float64 {
+	out := make(map[string]float64, len(subject))
+	for id, vec := range subject {
+		refVec, ok := reference[id]
+		if !ok {
+			continue
+		}
+		out[id] = cosineSimilarity(vec, refVec)
+	}
+	return out
 }
 
 // rankNotes orders note IDs by descending cosine similarity to
 // queryVector, breaking ties on note ID for determinism.
-func rankNotes(notes []Note, queryVector []float32, noteVectors [][]float32) []string {
+func rankNotes(notes []Note, queryVector []float32, noteVectorsByID map[string][]float32) []string {
 	type scored struct {
 		id    string
 		score float64
@@ -84,7 +130,7 @@ func rankNotes(notes []Note, queryVector []float32, noteVectors [][]float32) []s
 
 	scoredNotes := make([]scored, len(notes))
 	for i, n := range notes {
-		scoredNotes[i] = scored{id: n.ID, score: cosineSimilarity(queryVector, noteVectors[i])}
+		scoredNotes[i] = scored{id: n.ID, score: cosineSimilarity(queryVector, noteVectorsByID[n.ID])}
 	}
 	sort.SliceStable(scoredNotes, func(i, j int) bool {
 		if scoredNotes[i].score != scoredNotes[j].score {

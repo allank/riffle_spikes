@@ -53,7 +53,7 @@ func TestRunPerfectRankingScoresMaxNDCGAndMRR(t *testing.T) {
 		"Q":      {1, 0, 0},
 	}}
 
-	report, err := Run(context.Background(), corpus, embedder)
+	report, err := Run(context.Background(), corpus, embedder, nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestRunPerfectRankingScoresMaxNDCGAndMRR(t *testing.T) {
 		t.Errorf("AggregateMRR = %v, want 1.0", report.AggregateMRR)
 	}
 	if report.CosineSimilarity != nil {
-		t.Errorf("CosineSimilarity = %v, want nil (not populated by Run)", report.CosineSimilarity)
+		t.Errorf("CosineSimilarity = %v, want nil (no reference supplied)", report.CosineSimilarity)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestRunInvertedRankingScoresPenalized(t *testing.T) {
 		"Q":      {1, 0, 0},
 	}}
 
-	report, err := Run(context.Background(), corpus, embedder)
+	report, err := Run(context.Background(), corpus, embedder, nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -124,7 +124,7 @@ func TestRunQueryWithNoExpectedRankingScoresZero(t *testing.T) {
 		"unranked query": {1, 0},
 	}}
 
-	report, err := Run(context.Background(), corpus, embedder)
+	report, err := Run(context.Background(), corpus, embedder, nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -142,8 +142,68 @@ func TestRunPropagatesEmbedderError(t *testing.T) {
 	corpus := threeNoteCorpus()
 	embedder := fakeEmbedder{vectors: map[string][]float32{}} // every lookup fails
 
-	if _, err := Run(context.Background(), corpus, embedder); err == nil {
+	if _, err := Run(context.Background(), corpus, embedder, nil); err == nil {
 		t.Error("Run() error = nil, want non-nil when embedder fails")
+	}
+}
+
+func TestRunWithReferencePopulatesCosineSimilarity(t *testing.T) {
+	corpus := threeNoteCorpus()
+	embedder := fakeEmbedder{vectors: map[string][]float32{
+		"note A": {1, 0, 0},
+		"note B": {0, 1, 0},
+		"note C": {0, 0, 1},
+		"Q":      {1, 0, 0},
+	}}
+	// Reference intentionally omits note C, to verify a note absent from
+	// the reference is excluded from CosineSimilarity rather than scored
+	// as 0 or causing an error.
+	reference := map[string][]float32{
+		"A": {1, 0, 0}, // identical to embedder's vector -> cos 1
+		"B": {1, 1, 0}, // 45 degrees from embedder's {0,1,0} -> cos 1/sqrt(2)
+	}
+
+	report, err := Run(context.Background(), corpus, embedder, reference)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(report.CosineSimilarity) != 2 {
+		t.Fatalf("len(CosineSimilarity) = %d, want 2 (A and B only, C absent from reference): %v", len(report.CosineSimilarity), report.CosineSimilarity)
+	}
+	if !approxEqual(report.CosineSimilarity["A"], 1.0) {
+		t.Errorf("CosineSimilarity[A] = %v, want 1.0", report.CosineSimilarity["A"])
+	}
+	wantB := 1 / math.Sqrt(2)
+	if !approxEqual(report.CosineSimilarity["B"], wantB) {
+		t.Errorf("CosineSimilarity[B] = %v, want %v", report.CosineSimilarity["B"], wantB)
+	}
+	if _, ok := report.CosineSimilarity["C"]; ok {
+		t.Errorf("CosineSimilarity[C] present = %v, want absent (no reference vector for C)", report.CosineSimilarity["C"])
+	}
+}
+
+func TestCosineSimilarityKnownVectorPairs(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b []float32
+		want float64
+	}{
+		{name: "identical vectors", a: []float32{1, 0, 0}, b: []float32{1, 0, 0}, want: 1},
+		{name: "orthogonal vectors", a: []float32{1, 0, 0}, b: []float32{0, 1, 0}, want: 0},
+		{name: "opposite vectors", a: []float32{1, 0, 0}, b: []float32{-1, 0, 0}, want: -1},
+		{name: "45 degrees apart", a: []float32{1, 0}, b: []float32{1, 1}, want: 1 / math.Sqrt(2)},
+		{name: "differing magnitudes, same direction", a: []float32{1, 0}, b: []float32{5, 0}, want: 1},
+		{name: "zero vector", a: []float32{0, 0}, b: []float32{1, 0}, want: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cosineSimilarity(tc.a, tc.b)
+			if !approxEqual(got, tc.want) {
+				t.Errorf("cosineSimilarity(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
 	}
 }
 
