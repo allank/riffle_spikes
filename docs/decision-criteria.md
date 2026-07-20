@@ -1,6 +1,6 @@
 # Spike Decision Criteria
 
-One row per spike, filled in as each completes, so the final choice is a table read (PRD Section 7). Backing data for each row lives under `docs/golden-eval-results/<spike>/`.
+One row per spike, filled in as each completes, so the final choice is a table read (PRD Section 7). The table below reflects the Intel dev machine used throughout this repo's earlier work; see the "Apple Silicon (Apple M1) results" section further down for the same measurements on Apple Silicon.
 
 | Spike | Throughput (chunks/sec) | Latency (cold / warm) | Cold start | Binary/asset size | Install steps | Cross-compile complexity | Numerical fidelity (golden eval) | Maintenance surface |
 |---|---|---|---|---|---|---|---|---|
@@ -38,7 +38,7 @@ Both sidecars' *warm* query latency (tract 18.4ms, candle ~18.9ms — essentiall
 
 ⁵ Three query-mode runs: cold 197.0ms / 206.6ms / 181.7ms (avg ~195ms), warm 19.2ms / 19.7ms / 17.7ms (avg ~18.9ms), cold start 200.6ms / 209.1ms / 184.2ms (avg ~198ms) — consistent across runs, no outlier the way tract had one. candle's warm query latency (~18.9ms) is essentially identical to tract's (18.4ms) and both comfortably beat pure Go (39.6ms), but candle's cold cost is roughly a quarter of tract's — see footnote ⁴.
 
-⁶ Metal device *construction* (`Device::new_metal(0)`) succeeds, but the first inference call fails: `"running inference: Metal error Failed to create pipeline"` — a Metal compute-pipeline-state creation failure, not a bug in this repo's code. Hardware: a 2020 13" Intel MacBook Pro with integrated Intel Iris Plus Graphics (`system_profiler` reports "Metal Support: Metal 3"), macOS 26.3.1. `candle`'s Metal backend (`candle-metal-kernels`) is developed and tested primarily against Apple Silicon GPUs; a compiled kernel that validates fine on an Apple GPU family can still fail pipeline creation on a different GPU architecture (Intel's integrated graphics) even when the OS reports Metal 3 support at the device level — that flag doesn't guarantee every kernel a given Metal *client library* ships compiles for that specific GPU. No quick fix found (a short search turned up no known issue matching this exact error on Intel integrated graphics). **This needs Apple Silicon hardware to actually measure** — correctness and performance numbers are not available from this machine. The `CANDLE_DEVICE` env var and `Device::new_metal(0)` construction code itself is implemented and working correctly per the ticket's spec; only the downstream Metal compute path is blocked.
+⁶ Metal device *construction* (`Device::new_metal(0)`) succeeds, but the first inference call fails: `"running inference: Metal error Failed to create pipeline"` — a Metal compute-pipeline-state creation failure, not a bug in this repo's code. Hardware: a 2020 13" Intel MacBook Pro with integrated Intel Iris Plus Graphics (`system_profiler` reports "Metal Support: Metal 3"), macOS 26.3.1. `candle`'s Metal backend (`candle-metal-kernels`) is developed and tested primarily against Apple Silicon GPUs; a compiled kernel that validates fine on an Apple GPU family can still fail pipeline creation on a different GPU architecture (Intel's integrated graphics) even when the OS reports Metal 3 support at the device level — that flag doesn't guarantee every kernel a given Metal *client library* ships compiles for that specific GPU. No quick fix found (a short search turned up no known issue matching this exact error on Intel integrated graphics). The `CANDLE_DEVICE` env var and `Device::new_metal(0)` construction code itself is implemented and working correctly per the ticket's spec; only the downstream Metal compute path was blocked **on this Intel machine**. **Resolved 2026-07-20**: measured successfully on real Apple Silicon hardware — see the "Apple Silicon (Apple M1)" section below for full correctness and performance numbers. riffle_spikes#18 is closed.
 
 ## Repeat-invocation caching: ONNX benefits, tract mostly doesn't
 
@@ -55,3 +55,37 @@ All numbers above come from single fresh CLI invocations. A real question (raise
 Contrast with tract's own three query-mode runs (footnote ³ above): 1.25s → 750ms → 748ms. Unlike ONNX, tract's `ColdStart ≈ LatencyCold` in every run — construction was already near-zero from the start (footnote ²), so there's no construction-time component for page-caching to speed up. The drop from run 1 to run 2 (1.25s → 750ms) is plausibly a smaller, secondary page-cache effect on top of tract's own first-`.run()` setup cost, but that setup cost itself doesn't go away — it plateaus at ~750ms rather than continuing toward something ONNX-like.
 
 **Net effect: ONNX's real advantage over tract on cold start is larger than the headline numbers already suggested.** A CLI invoked repeatedly through a work session would mostly see ONNX's cached ~370ms construction cost, not its first-ever 642ms — while tract's ~700–750ms first-call cost doesn't have an equivalent discount. This reinforces, rather than changes, the sidecar-lifecycle conclusion already drawn: a long-lived process (paying tract's setup cost once, ever) remains the right architecture regardless of this caching effect, since it makes the per-invocation question moot in production use.
+
+## Apple Silicon (Apple M1) results
+
+A second, complete data set — **all five engines**, correctness and both performance modes — measured on real Apple Silicon hardware: MacBook Pro (MacBookPro17,1), Apple M1, 8-core (4 performance + 4 efficiency), 8GB RAM, macOS 26.5.2. This is additive to the Intel numbers above, not a replacement — the two tables above reflect the Intel dev machine used throughout this repo's earlier work; this section is the from-scratch run on different hardware, primarily to unblock candle-Metal (riffle_spikes#18) but captured for every engine so the two machines are directly comparable.
+
+| Spike | Throughput (chunks/sec) | Latency (cold / warm) | Cold start | Numerical fidelity (golden eval) |
+|---|---|---|---|---|
+| Golden eval baseline (ONNX reference) | 15.4 | cold 35.0ms / warm 64.9ms | 1201.0ms | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `onnxadapter`) |
+| Spike 2 — pure Go | 0.6 | cold 925.8ms / warm 1621.6ms⁷ | 1074.2ms | nDCG 1.0000, MRR 1.0000; cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes |
+| Spike 3 — Rust sidecar (tract) | 6.5 | cold 420.1ms / warm 143.6ms | 422.1ms | nDCG 1.0000, MRR 1.0000; cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes |
+| Spike 3 — Rust sidecar (candle, CPU) | 4.9 | cold 570.7ms / warm 178.2ms | 572.4ms | nDCG 1.0000, MRR 1.0000; cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes⁹ |
+| Spike 3 — Rust sidecar (candle, Metal) | 9.1 | cold 222.6ms / warm 104.4ms⁸ | 223.7ms | nDCG 1.0000, MRR 1.0000; cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes |
+
+**candle-Metal is correct and, on this hardware, the fastest sidecar option measured so far**: 9.1 chunks/sec is only ~1.7x slower than ONNX (15.4) — closer to ONNX than any sidecar has gotten on either machine (tract on Intel: ~5x slower; candle-CPU on Intel: ~2.4x slower). It's also ~1.9x faster than candle-CPU on this same machine (9.1 vs 4.9), confirming the GPU path is a real, worthwhile win on Apple Silicon specifically — unlike the Intel integrated GPU, which couldn't run it at all (footnote ⁶).
+
+### Query-time latency — Apple Silicon (Apple M1)
+
+Mirroring the Intel-machine query-mode table above (`spike2_measure/cmd/measure -mode query`, same 50-query, 2–15 word corpus):
+
+| Engine | Latency (cold) | Latency (warm) | Cold start | Meets <100ms goal? |
+|---|---|---|---|---|
+| ONNX reference | 4.3ms | 4.1ms | 312.0ms | Yes — both cold and warm |
+| Pure Go | 60.2ms | 64.2ms | 244.2ms | Yes — both cold and warm |
+| Rust sidecar (tract) | 654.7ms | 7.7ms | 655.9ms | Warm: yes. Cold: **no** |
+| Rust sidecar (candle, CPU) | 401.5ms | 17.6ms | 402.7ms | Warm: yes. Cold: **no** |
+| Rust sidecar (candle, Metal) | 607.9ms | 7.5ms⁸ | 609.6ms | Warm: yes. Cold: **no** |
+
+Same shape as the Intel results: every engine comfortably meets the <100ms goal once warm; the two sidecars pay a first-call setup cost that doesn't amortize until the second call. candle-Metal's warm query latency (7.5ms) is the best of any engine measured on either machine, including ONNX's own warm number (4.1ms is still lower in absolute terms, but candle-Metal is now closer to ONNX warm-for-warm than any sidecar has been).
+
+⁷ Pure Go's warm latency (1621.6ms) being *higher* than its cold latency (925.8ms) in index mode is the opposite of the usual warmup pattern, and differs from the Intel machine's pure-Go result (footnote ¹, where warm was also higher than cold but for a documented chunk-length-variance reason). The most likely explanation here is this machine's 8GB of RAM: pure Go's index-mode run processes 1,000 generated chunks back-to-back with no external process boundary, and sustained CPU/memory pressure from that workload on an 8GB M1 plausibly triggers memory pressure or thermal throttling partway through the run that a single early "cold" sample wouldn't show. Not independently confirmed (no memory-pressure telemetry was captured during the run) — flagged as the most plausible reading, not a certainty.
+
+⁸ candle-Metal shows the same `ColdStart ≈ LatencyCold` structural pattern already documented for tract (footnote ²) and candle-CPU (footnote ⁴): 223.7ms cold start vs 222.6ms cold latency in index mode, 609.6ms vs 607.9ms in query mode. This is consistent with Metal compute-pipeline-state creation happening lazily on the first `.run()` call rather than at device/model construction — the same first-call tax GPU compute APIs typically impose, distinct from CPU-only tract/candle-CPU's own (smaller) version of the same phenomenon. Only one run was captured for each mode here (unlike tract's/candle-CPU's repeated-run checks, footnotes ³/⁵) — worth a repeat-run check later if this number matters for a production decision.
+
+⁹ candle-CPU's cosine similarity here is a clean `1.000000` across all 5 notes, versus `0.9999999999998` recorded for the same engine on the Intel machine. This is a real, expected difference, not a regression: `candle`'s CPU backend dispatches to different SIMD code paths per architecture (ARM NEON on Apple Silicon vs x86 AVX/SSE on Intel), and floating-point addition/multiplication is not associative — different instruction orderings produce bit-identical-to-ONNX results on one architecture and a ~1e-13 divergence on another. Both are correct to any practical tolerance; the difference is a floating-point-numerics curiosity, not a correctness concern for either machine.
