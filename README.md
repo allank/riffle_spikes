@@ -70,10 +70,13 @@ on but doesn't own.
   `model.safetensors`, `tokenizer.json`, `config.json`, under
   `inference/bge_bench/data/`) are gitignored in that repo and not
   distributed via git — they're the standard `BAAI/bge-small-en-v1.5`
-  HuggingFace model files. On a fresh machine you'll need to obtain
-  them separately: copy from an existing checkout, or export/download
-  them fresh (e.g. via `sentence-transformers`/`optimum-cli export
-  onnx` for the respective formats).
+  HuggingFace model files. `tokenizer.json`/`config.json` come with the
+  `onnx_test` checkout; `model.onnx`/`model.safetensors` are fetched
+  automatically (via `curl`, straight from HuggingFace, no Python/torch
+  needed) the first time any Makefile target needs them, or standalone
+  via `make fetch-bge-model`. If you already have these files from
+  elsewhere (e.g. a private fine-tune), just copy them into place — the
+  fetch only runs when a file is missing, so it won't overwrite them.
 - **Zig** — not currently required by anything in this repo. The PRD
   mentions `cargo zigbuild` for future cross-platform distribution
   builds (Spike 1), but nothing here does that yet — both Rust

@@ -23,6 +23,13 @@ TOKENIZER := $(ONNX_TEST_DIR)/tokenizer.json
 # differs.
 ONNX_LIB ?= /opt/homebrew/lib/libonnxruntime.dylib
 
+# BAAI/bge-small-en-v1.5's HuggingFace repo hosts model.safetensors (root)
+# and model.onnx (onnx/ subfolder) as plain static downloads — no
+# conversion/export tooling needed, just curl.
+HF_REPO := BAAI/bge-small-en-v1.5
+HF_BASE := https://huggingface.co/$(HF_REPO)/resolve/main
+MIN_MODEL_BYTES := 100000000
+
 TRACT_BINARY := spike3_rust_sidecar/target/release/spike3_rust_sidecar
 CANDLE_BINARY := spike3_candle_sidecar/target/release/spike3_candle_sidecar
 
@@ -31,6 +38,10 @@ MEASURE := go run ./spike2_measure/cmd/measure
 
 .PHONY: help
 help:
+	@echo "Setup:"
+	@echo "  fetch-bge-model          download+cache BGE model assets from HuggingFace"
+	@echo "                           (also runs automatically as needed by any target below)"
+	@echo ""
 	@echo "Build:"
 	@echo "  build-sidecars           build both Rust sidecars in release mode"
 	@echo ""
@@ -62,40 +73,66 @@ build-tract:
 build-candle:
 	cd spike3_candle_sidecar && cargo build --release
 
+# --- Fetch BGE model assets from HuggingFace (real file-targets, so Make's
+# own dependency tracking is the cache: a run only fetches if the file is
+# entirely absent; size is validated at download time, not re-checked on
+# later runs against a file already in place) ---
+
+# Canned recipe, parameterized on the source URL ($(1)); mkdir -> curl to a
+# .tmp path -> size-sanity-check-or-die -> mv, so a failed/truncated
+# download is never left at the real path for a later run to mistake for
+# an already-cached file.
+define fetch-and-verify
+	@mkdir -p $(dir $@)
+	curl -fL -o $@.tmp $(1)
+	@size=$$(stat -f%z $@.tmp 2>/dev/null || stat -c%s $@.tmp); \
+	  if [ "$$size" -lt $(MIN_MODEL_BYTES) ]; then echo "fetch-bge-model: $(notdir $@) too small ($$size bytes)" >&2; rm -f $@.tmp; exit 1; fi
+	mv $@.tmp $@
+endef
+
+.PHONY: fetch-bge-model
+fetch-bge-model: $(MODEL_ONNX) $(MODEL_SAFETENSORS)
+
+$(MODEL_ONNX):
+	$(call fetch-and-verify,$(HF_BASE)/onnx/model.onnx)
+
+$(MODEL_SAFETENSORS):
+	$(call fetch-and-verify,$(HF_BASE)/model.safetensors)
+
 # --- Golden eval: single-adapter smoke checks (no ONNX reference needed) ---
 
 .PHONY: golden-stub golden-puregopath golden-onnx golden-tract golden-candle-cpu golden-candle-metal
 golden-stub:
 	$(GOLDENEVAL)
 
-golden-puregopath:
+golden-puregopath: $(MODEL_SAFETENSORS)
 	$(GOLDENEVAL) -model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-golden-onnx:
+golden-onnx: $(MODEL_ONNX)
 	$(GOLDENEVAL) -onnx-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-lib $(ONNX_LIB)
 
-golden-tract: build-tract
+golden-tract: build-tract $(MODEL_ONNX)
 	$(GOLDENEVAL) -sidecar-binary $(TRACT_BINARY) -sidecar-model $(MODEL_ONNX) -tokenizer $(TOKENIZER)
 
-golden-candle-cpu: build-candle
+golden-candle-cpu: build-candle $(MODEL_SAFETENSORS)
 	$(GOLDENEVAL) -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-golden-candle-metal: build-candle
+golden-candle-metal: build-candle $(MODEL_SAFETENSORS)
 	CANDLE_DEVICE=metal $(GOLDENEVAL) -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
 # --- Golden eval: comparison mode vs the ONNX reference (the numbers that go in docs/decision-criteria.md) ---
 
 .PHONY: golden-puregopath-vs-onnx golden-tract-vs-onnx golden-candle-cpu-vs-onnx golden-candle-metal-vs-onnx golden-eval-all
-golden-puregopath-vs-onnx:
+golden-puregopath-vs-onnx: $(MODEL_SAFETENSORS) $(MODEL_ONNX)
 	$(GOLDENEVAL) -model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-lib $(ONNX_LIB)
 
-golden-tract-vs-onnx: build-tract
+golden-tract-vs-onnx: build-tract $(MODEL_ONNX)
 	$(GOLDENEVAL) -sidecar-binary $(TRACT_BINARY) -sidecar-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-lib $(ONNX_LIB)
 
-golden-candle-cpu-vs-onnx: build-candle
+golden-candle-cpu-vs-onnx: build-candle $(MODEL_SAFETENSORS) $(MODEL_ONNX)
 	$(GOLDENEVAL) -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-lib $(ONNX_LIB)
 
-golden-candle-metal-vs-onnx: build-candle
+golden-candle-metal-vs-onnx: build-candle $(MODEL_SAFETENSORS) $(MODEL_ONNX)
 	CANDLE_DEVICE=metal $(GOLDENEVAL) -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-lib $(ONNX_LIB)
 
 golden-eval-all: golden-puregopath-vs-onnx golden-tract-vs-onnx golden-candle-cpu-vs-onnx golden-candle-metal-vs-onnx
@@ -109,34 +146,34 @@ golden-eval-all: golden-puregopath-vs-onnx golden-tract-vs-onnx golden-candle-cp
 .PHONY: bench-candle-metal-index bench-candle-metal-query
 .PHONY: bench-all bench-all-query
 
-bench-puregopath-index:
+bench-puregopath-index: $(MODEL_SAFETENSORS)
 	$(MEASURE) -mode index -model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-bench-puregopath-query:
+bench-puregopath-query: $(MODEL_SAFETENSORS)
 	$(MEASURE) -mode query -model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-bench-onnx-index:
+bench-onnx-index: $(MODEL_ONNX)
 	$(MEASURE) -mode index -onnx-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-lib $(ONNX_LIB)
 
-bench-onnx-query:
+bench-onnx-query: $(MODEL_ONNX)
 	$(MEASURE) -mode query -onnx-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-lib $(ONNX_LIB)
 
-bench-tract-index: build-tract
+bench-tract-index: build-tract $(MODEL_ONNX)
 	$(MEASURE) -mode index -sidecar-binary $(TRACT_BINARY) -sidecar-model $(MODEL_ONNX) -tokenizer $(TOKENIZER)
 
-bench-tract-query: build-tract
+bench-tract-query: build-tract $(MODEL_ONNX)
 	$(MEASURE) -mode query -sidecar-binary $(TRACT_BINARY) -sidecar-model $(MODEL_ONNX) -tokenizer $(TOKENIZER)
 
-bench-candle-cpu-index: build-candle
+bench-candle-cpu-index: build-candle $(MODEL_SAFETENSORS)
 	$(MEASURE) -mode index -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-bench-candle-cpu-query: build-candle
+bench-candle-cpu-query: build-candle $(MODEL_SAFETENSORS)
 	$(MEASURE) -mode query -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-bench-candle-metal-index: build-candle
+bench-candle-metal-index: build-candle $(MODEL_SAFETENSORS)
 	CANDLE_DEVICE=metal $(MEASURE) -mode index -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
-bench-candle-metal-query: build-candle
+bench-candle-metal-query: build-candle $(MODEL_SAFETENSORS)
 	CANDLE_DEVICE=metal $(MEASURE) -mode query -sidecar-binary $(CANDLE_BINARY) -sidecar-model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER)
 
 bench-all: bench-puregopath-index bench-puregopath-query bench-onnx-index bench-onnx-query bench-tract-index bench-tract-query bench-candle-cpu-index bench-candle-cpu-query bench-candle-metal-index bench-candle-metal-query
