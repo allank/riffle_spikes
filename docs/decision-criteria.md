@@ -8,7 +8,7 @@ One row per spike, filled in as each completes, so the final choice is a table r
 | Spike 2 — pure Go | 0.6 | cold 794.1ms / warm 1471.9ms¹ | 1186.6ms | | | | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `puregoadapter`); cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes | |
 | Spike 3 — Rust sidecar (tract) | 1.5 | cold 1047.6ms / warm 681.7ms² | 1050.2ms | | | | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `sidecaradapter`/`tract`); cosine similarity 1.000000 vs ONNX reference on all 5 corpus notes | |
 | Spike 3 — Rust sidecar (candle, CPU) | 3.2 | cold 362.6ms / warm 306.1ms⁴ | 367.2ms | | | | nDCG 1.0000, MRR 1.0000 (aggregate, golden eval corpus, `sidecaradapter`/candle CPU); cosine similarity 0.9999999999998 vs ONNX reference on all 5 corpus notes | |
-| Spike 3 — Rust sidecar (candle, Metal) | **blocked on hardware⁶** | — | — | | | | — | |
+| Spike 3 — Rust sidecar (candle, Metal) | **blocked on hardware⁶ (Intel only — resolved on Apple Silicon, see below)** | — | — | | | | — | |
 
 Throughput/latency/cold-start numbers: `spike2_measure/cmd/measure` against the real 1,000-chunk generated corpus (`spike2_measure.GenerateCorpus`, seed 42; chunks 50–400 words, averaging ~225), using onnx_test's local `model.onnx`/`model.safetensors` + `tokenizer.json` (+ `libonnxruntime.dylib` for ONNX). Throughput ratio (ONNX 7.6 / pure-Go 0.6 ≈ 12.7x) is consistent with ADR-0002's addendum (~10-13x after the raw-slice optimization), now measured against realistic chunk lengths rather than short test sentences. tract lands between the two: 1.5 chunks/sec is ~5x slower than ONNX but ~2.5x faster than pure Go — a real, if middling, result, not the "same order of magnitude as ONNX" the PRD's Spike 3 section hoped for. **candle's CPU path does materially better**: 3.2 chunks/sec is only ~2.4x slower than ONNX and more than 2x faster than tract — the PRD's kill criteria ("tract lands materially slower than ONNX Runtime *and* candle's CPU path does too") looks much harder to satisfy on this evidence, since candle's CPU gap to ONNX is meaningfully smaller than tract's.
 
@@ -28,7 +28,7 @@ The table above measures index-time chunk latency (50–400 words). The PRD's ow
 | Pure Go | 42.1ms | 39.6ms | 476.7ms | Yes — both cold and warm |
 | Rust sidecar (tract) | ~750ms³ | 18.4ms | ~750ms³ | Warm: yes. Cold: **no** |
 | Rust sidecar (candle, CPU) | ~195ms⁵ | ~18.9ms | ~198ms⁵ | Warm: yes. Cold: **no** |
-| Rust sidecar (candle, Metal) | blocked on hardware⁶ | — | — | — |
+| Rust sidecar (candle, Metal) | blocked on hardware⁶ (Intel only — resolved on Apple Silicon, see below) | — | — | — |
 
 **Confirmed**: Spike 2's hypothesis holds — pure Go is sufficient at query time (39.6–42.1ms, well under the 100ms goal), even though it's ~12.7x slower than ONNX at indexing throughput. Per the PRD's own framing (Section 8, Spike 2): *"if query latency is fine and indexing a full vault in pure Go is a one-time cost, everything below becomes optimisation rather than requirement."* This means Spike 3 (and beyond) is about improving **indexing throughput**, not query latency — pure Go's query-time performance is not a blocker.
 
