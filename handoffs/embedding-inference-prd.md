@@ -1,6 +1,6 @@
 # Embedding-inference PRD spikes
 
-**Status:** All spikes done, all tickets closed. Candle-Metal measured for real on Apple Silicon (#18 closed) and `make` on a fresh machine is now fully automated (#19 closed). Only remaining open thread is the PRD's Spike 3 kill/keep decision itself — a judgment call, not a ticket.
+**Status:** All spikes done, all tickets closed (including parent #16). Candle-Metal measured for real on Apple Silicon (#18 closed) and `make` on a fresh machine is now fully automated (#19 closed). Only remaining open thread is the PRD's Spike 3 kill/keep decision itself — a judgment call, not a ticket, deliberately left open.
 **Updated:** 2026-07-20
 
 ## Goal
@@ -27,22 +27,20 @@ Test local embedding-inference options for Riffle (pure Go, ONNX Runtime, Rust s
 ## Open threads
 - **PRD's Spike 3 kill/keep decision** — not yet formally made. All five numbers now exist (ONNX/pure-Go/tract/candle-CPU/candle-Metal, on both Intel and Apple Silicon); the evidence is fully in hand, candle looks materially stronger than tract on both counts (CPU and Metal), but the actual go/no-go call and any resulting `riffle` ADR is a decision for Allan to make, not something resolved by this repo's tickets.
 - Full-vault indexing time (~10k chunks, PRD Goals section) never measured — out of scope so far.
-- Parent issue **#16** ("Spike 3: candle sidecar (CPU + Metal)") is still open — both its children (#17 CPU, #18 Metal) are now closed and its own stated scope (produce candle's CPU+Metal evidence; kill/keep decision explicitly out of scope for it) is fully satisfied. Likely ready to close, but left open pending Allan's confirmation since closing a parent/epic issue felt like a bigger call than closing a leaf ticket.
 - `CANDLE_DEVICE=auto` design (Metal-with-CPU-fallback) — deferred, not built.
 
 ## Next steps
-1. Decide whether to close parent issue #16.
-2. Make the PRD's Spike 3 kill/keep call with all five numbers in hand — likely candle becomes the Horizon 2 feasibility gate per the PRD, but this is Allan's decision to make, not an agent's.
-3. If that decision is consequential, graduate it into a `riffle` ADR per this repo's established convention (`riffle_spikes` doesn't keep its own ADRs).
-4. If still wanted: implement `CANDLE_DEVICE=auto` (design already discussed in an earlier session).
-5. If ever revisited: full-vault indexing time at ~10k chunks (PRD Goals section), currently unmeasured.
+1. Make the PRD's Spike 3 kill/keep call with all five numbers in hand — likely candle becomes the Horizon 2 feasibility gate per the PRD, but this is Allan's decision to make, not an agent's.
+2. If that decision is consequential, graduate it into a `riffle` ADR per this repo's established convention (`riffle_spikes` doesn't keep its own ADRs).
+3. If still wanted: implement `CANDLE_DEVICE=auto` (design already discussed in an earlier session).
+4. If ever revisited: full-vault indexing time at ~10k chunks (PRD Goals section), currently unmeasured.
 
 ## Artifacts
 - Results: `docs/decision-criteria.md` (Intel table + Apple Silicon section)
 - Glossary: `CONTEXT.md`
 - Setup/run: `README.md`, `Makefile` (`make help`, now includes `fetch-bge-model`)
 - Specs: `docs/superpowers/specs/2026-07-20-fetch-bge-model-design.md`
-- Issues: https://github.com/allank/riffle_spikes/issues — all closed except parent #16
+- Issues: https://github.com/allank/riffle_spikes/issues — all closed
 - PRD source doc: on Allan's machine, not in this repo
 
 ## Suggested promotions
