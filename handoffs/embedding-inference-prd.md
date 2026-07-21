@@ -39,7 +39,7 @@ Test local embedding-inference options for Riffle (pure Go, ONNX Runtime, Rust s
 - Results: `docs/decision-criteria.md` (Intel table + Apple Silicon section)
 - Glossary: `CONTEXT.md`
 - Setup/run: `README.md`, `Makefile` (`make help`, now includes `fetch-bge-model`)
-- Specs: `docs/superpowers/specs/2026-07-20-fetch-bge-model-design.md`
+- Specs: `docs/specs/2026-07-20-fetch-bge-model-design.md`
 - Issues: https://github.com/allank/riffle_spikes/issues — all closed
 - PRD source doc: on Allan's machine, not in this repo
 
