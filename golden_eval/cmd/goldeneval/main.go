@@ -15,6 +15,13 @@
 // subject adapter's rankings, plus its per-note cosine similarity
 // against the ONNX adapter's output as reference — printed as an extra
 // table alongside the ranking metrics.
+//
+// -onnx-embedded is an alternative to -onnx-lib: instead of a path to a
+// separately-installed ONNX Runtime shared library (e.g. via brew
+// install onnxruntime), it downloads and caches the appropriate release
+// on first use (see the embeddedonnx package's doc comment). Mutually
+// exclusive with -onnx-lib. Only available on platforms embeddedonnx
+// supports — currently darwin/arm64 only.
 package main
 
 import (
@@ -26,6 +33,7 @@ import (
 	"sort"
 	"text/tabwriter"
 
+	"github.com/allank/riffle_spikes/embeddedonnx"
 	goldeneval "github.com/allank/riffle_spikes/golden_eval"
 )
 
@@ -50,11 +58,25 @@ func run() error {
 		"path to onnx_test's model.onnx; set together with -onnx-lib and -tokenizer to use the ONNX reference adapter (env: GOLDENEVAL_ONNX_MODEL_PATH)")
 	onnxLibPath := flag.String("onnx-lib", os.Getenv("GOLDENEVAL_ONNX_LIB_PATH"),
 		"path to the ONNX Runtime shared library, e.g. libonnxruntime.dylib (env: GOLDENEVAL_ONNX_LIB_PATH)")
+	onnxEmbedded := flag.Bool("onnx-embedded", false,
+		"use ONNX Runtime downloaded+cached on first use instead of -onnx-lib; only supported on platforms embeddedonnx lists (darwin/arm64 today)")
 	sidecarBinaryPath := flag.String("sidecar-binary", os.Getenv("GOLDENEVAL_SIDECAR_BINARY_PATH"),
 		"path to the compiled spike3_rust_sidecar binary; set together with -sidecar-model and -tokenizer to use the sidecar adapter, mutually exclusive with -model (env: GOLDENEVAL_SIDECAR_BINARY_PATH)")
 	sidecarModelPath := flag.String("sidecar-model", os.Getenv("GOLDENEVAL_SIDECAR_MODEL_PATH"),
 		"path to onnx_test's model.onnx, passed through to the sidecar binary (env: GOLDENEVAL_SIDECAR_MODEL_PATH)")
 	flag.Parse()
+
+	resolvedOnnxLibPath := *onnxLibPath
+	if *onnxEmbedded {
+		if *onnxLibPath != "" {
+			return fmt.Errorf("-onnx-embedded and -onnx-lib are mutually exclusive; pick one ONNX Runtime source")
+		}
+		path, err := embeddedonnx.Path()
+		if err != nil {
+			return fmt.Errorf("resolving embedded ONNX Runtime library: %w", err)
+		}
+		resolvedOnnxLibPath = path
+	}
 
 	corpus, err := goldeneval.LoadCorpus(*corpusDir)
 	if err != nil {
@@ -65,7 +87,7 @@ func run() error {
 		tokenizerPath:     *tokenizerPath,
 		modelPath:         *modelPath,
 		onnxModelPath:     *onnxModelPath,
-		onnxLibPath:       *onnxLibPath,
+		onnxLibPath:       resolvedOnnxLibPath,
 		sidecarBinaryPath: *sidecarBinaryPath,
 		sidecarModelPath:  *sidecarModelPath,
 	})

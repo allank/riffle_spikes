@@ -45,6 +45,10 @@ help:
 	@echo "Build:"
 	@echo "  build-sidecars           build both Rust sidecars in release mode"
 	@echo ""
+	@echo "Golden eval (correctness) — single-adapter smoke checks:"
+	@echo "  golden-onnx-embedded     ONNX Runtime downloaded+cached on first use instead"
+	@echo "                           of -onnx-lib — no brew install needed (darwin/arm64 only)"
+	@echo ""
 	@echo "Golden eval (correctness) — comparison mode vs the ONNX reference:"
 	@echo "  golden-puregopath-vs-onnx"
 	@echo "  golden-tract-vs-onnx"
@@ -101,7 +105,7 @@ $(MODEL_SAFETENSORS):
 
 # --- Golden eval: single-adapter smoke checks (no ONNX reference needed) ---
 
-.PHONY: golden-stub golden-puregopath golden-onnx golden-tract golden-candle-cpu golden-candle-metal
+.PHONY: golden-stub golden-puregopath golden-onnx golden-onnx-embedded golden-tract golden-candle-cpu golden-candle-metal
 golden-stub:
 	$(GOLDENEVAL)
 
@@ -110,6 +114,12 @@ golden-puregopath: $(MODEL_SAFETENSORS)
 
 golden-onnx: $(MODEL_ONNX)
 	$(GOLDENEVAL) -onnx-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-lib $(ONNX_LIB)
+
+# Same as golden-onnx, but loads ONNX Runtime from the binary's embedded
+# copy (riffle_spikes#20) instead of a brew-installed -onnx-lib path —
+# no `brew install onnxruntime` needed.
+golden-onnx-embedded: $(MODEL_ONNX)
+	$(GOLDENEVAL) -onnx-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-embedded
 
 golden-tract: build-tract $(MODEL_ONNX)
 	$(GOLDENEVAL) -sidecar-binary $(TRACT_BINARY) -sidecar-model $(MODEL_ONNX) -tokenizer $(TOKENIZER)

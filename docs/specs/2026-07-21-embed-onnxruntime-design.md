@@ -121,6 +121,115 @@ deciding it here.
   size like `fetch-bge-model` does for model assets).
 - The Intel-Mac decision above is made explicitly, not left implicit.
 
+## Implementation outcome (riffle_spikes#20)
+
+Two things changed materially between this spec and what shipped, both
+discovered during implementation rather than anticipated up front.
+
+### The mechanism moved from `go:embed` to download-and-cache
+
+`go:embed`-ing the shared library into the binary was the original plan
+(see "Proposed mechanism" above), but it means every compiled binary
+carries the library's full size forever, and needing the asset present
+on the *build* machine for every target platform. Since
+`yalue/onnxruntime_go` already loads ONNX Runtime via runtime `dlopen`
+(not a link-time dependency — see "What 'embedding' actually means
+here" above), there's no reason the bytes need to be compiled in at all.
+`embeddedonnx` instead downloads the platform's release tarball on first
+use, extracts the one shared-library member it needs (via Go's stdlib
+`archive/tar`/`compress/gzip` — no shell-out to `tar`), and caches it at
+`$XDG_CACHE_HOME/riffle/onnxruntime-<version>-<os>-<arch>/`. A cache hit
+costs zero network calls — the check happens before any download is
+attempted. This is the same download-once-cache-forever shape this
+repo's own `fetch-bge-model` Makefile target already uses for the BGE
+model weights, just applied to ONNX Runtime and moved from build time to
+CLI runtime.
+
+This resolves the "binary size impact" open question directly: binary
+size no longer depends on target platform at all, so there's no
+Windows-is-10x-bigger tradeoff to make.
+
+### Apple Silicon only, for a sharper reason than expected — and why
+
+The Intel-Mac gap (see above) turned out to be more than "Microsoft
+stopped shipping an osx-x64 binary." `yalue/onnxruntime_go` v1.29.0
+(already pinned in this repo's `go.mod`) hardcodes a request for ONNX
+Runtime **API version 25** — the C header shipped with each Go binding
+version fixes this at compile time (`ort_api =
+api_base->GetApi(ORT_API_VERSION)` in `onnxruntime_wrapper.c`). Checking
+each ONNX Runtime release's own bundled C header directly (not assumed)
+against Microsoft's source tree:
+
+| ONNX Runtime version | Max API version supported |
+|---|---|
+| v1.23.0 (last with an official osx-x64 build) | 23 |
+| v1.24.1 | 24 |
+| **v1.25.0** (first version without an osx-x64 build) | **25** |
+
+The x64-binary gap and the API-version gap land on the exact same
+release boundary. There is no ONNX Runtime version where "Microsoft
+publishes an official osx-x64 binary" and "supports API 25" are both
+true — confirmed empirically, not just by reading headers: `make
+golden-onnx ONNX_LIB=/usr/local/lib/libonnxruntime.dylib` against this
+machine's Homebrew-installed 1.25.1 works fine (nDCG 1.0000), proving
+1.25.1 does support API 25 — but Homebrew's Intel build is compiled from
+source, not downloaded from Microsoft, which is exactly the workaround
+gap already flagged above. Pinning to v1.23.0 for Intel Mac (the
+original plan) was tried and fails at the first inference call: `The
+requested API version [25] is not available, only API versions [1, 23]
+are supported in this build.`
+
+**Decision**: `embeddedonnx` supports darwin/arm64 only for now, pinned
+to v1.27.1 (current latest; Microsoft still publishes an official arm64
+build at every release). darwin/amd64 is a registered-but-absent entry
+in `embeddedonnx`'s platform manifest with a clear error, not a silent
+gap. Intel Mac users are unaffected — `-onnx-lib` + `brew install
+onnxruntime` continues to work exactly as before.
+
+**Path to Intel Mac support, if wanted later**: not a version-pin
+change — Go modules resolve one version of a given import path for the
+whole build, so there's no way to make `yalue/onnxruntime_go` request
+API 22 for one `GOARCH` and API 25 for another. The real fix is a
+second, build-tag-selected backend behind the same `goldeneval.Embedder`
+interface every adapter already implements: a minimal, hand-written cgo
+bridge against ONNX Runtime's C API hardcoded to an older
+`ORT_API_VERSION`, used only when building for darwin/amd64, alongside
+(not replacing) today's `onnxadapter`-backed path for every other
+platform. This is a genuinely separate, sizeable unit of work — it means
+maintaining a second ONNX Runtime C binding, not a config change — so
+it's scoped as its own follow-up ticket rather than folded into #20.
+
+### Verified, and what's still hardware-blocked
+
+- **Download+extract functions, verified directly**: `resolveAsset`,
+  `downloadBytes`, and `extractTarMember` — the pieces that don't depend
+  on `runtime.GOOS`/`GOARCH` — were called directly (bypassing `Path()`,
+  which does depend on them) against the real `microsoft/onnxruntime`
+  v1.27.1 osx-arm64 release asset from this Intel machine: tarball
+  downloaded at exactly the expected 31,959,937 bytes, extracted
+  `libonnxruntime.1.27.1.dylib` member matched the expected 38,502,216
+  bytes exactly. `Path()` itself has **not** been run end-to-end on any
+  machine yet, arm64 included — it refuses to run at all on this
+  darwin/amd64 machine by design (`resolveAsset` has no darwin/amd64
+  entry), so the actual code path a user hits is still unverified as a
+  whole, only piece-by-piece.
+- **Gatekeeper/quarantine: partially checked, not resolved**. Files
+  written via `os.WriteFile`+`os.Rename` (the same primitive
+  `extractTo` uses) don't receive the `com.apple.quarantine` extended
+  attribute on this machine — confirmed by `xattr -l` on a file written
+  through that exact code path; only the non-blocking
+  `com.apple.provenance` attribute is present. That answers "does the
+  write itself get quarantined" (no), but the AC's real question —
+  whether `dlopen` hits any Gatekeeper friction at load time — is still
+  unverified, since no downloaded library has actually been `dlopen`'d
+  in this diff, on any machine.
+- **Still blocked on hardware**: the full pipeline — `Path()` end to
+  end, `dlopen`, and a real golden-eval run against the extracted
+  library — needs actual Apple Silicon. Same situation issue #18
+  (candle-Metal) was in before real M1 hardware became available. `make
+  golden-onnx-embedded` on Apple Silicon is the next step, and the one
+  that actually closes out the remaining ACs.
+
 ## Out of scope
 
 - GPU/CUDA builds — irrelevant to Riffle's CPU-only inference use case;

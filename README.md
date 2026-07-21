@@ -63,7 +63,12 @@ on but doesn't own.
   shared library. Default paths this repo's Makefile/CLIs assume:
   `/opt/homebrew/lib/libonnxruntime.dylib` (Apple Silicon Homebrew) or
   `/usr/local/lib/libonnxruntime.dylib` (Intel Homebrew) — override via
-  `-onnx-lib` (CLIs) or `ONNX_LIB` (Makefile) if yours differs.
+  `-onnx-lib` (CLIs) or `ONNX_LIB` (Makefile) if yours differs. On
+  Apple Silicon, `-onnx-embedded` (or `make golden-onnx-embedded`) skips
+  `brew install` entirely — it downloads and caches ONNX Runtime on
+  first use instead (see `embeddedonnx`'s package doc and
+  `docs/specs/2026-07-21-embed-onnxruntime-design.md`). Not yet
+  supported on Intel Mac — see that spec for why.
 - **`onnx_test`**, checked out as a sibling directory (`../onnx_test`
   relative to this repo) — `golden_eval`'s Go module has a `replace`
   directive pointing there. Its model assets (`model.onnx`,
