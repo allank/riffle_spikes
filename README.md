@@ -130,3 +130,7 @@ comment or `make help`.
   [open](https://github.com/allank/riffle_spikes/issues) and
   [closed](https://github.com/allank/riffle_spikes/issues?q=is%3Aissue+is%3Aclosed)
   issues for the full history of specs and tickets behind this work.
+
+## License
+
+[MIT](LICENSE).
