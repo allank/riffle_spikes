@@ -47,7 +47,8 @@ help:
 	@echo ""
 	@echo "Golden eval (correctness) — single-adapter smoke checks:"
 	@echo "  golden-onnx-embedded     ONNX Runtime downloaded+cached on first use instead"
-	@echo "                           of -onnx-lib — no brew install needed (darwin/arm64 only)"
+	@echo "                           of -onnx-lib — no brew install needed (darwin only)"
+	@echo "  golden-puregopath-vs-onnx-embedded  same, plus cosine similarity vs pure-Go"
 	@echo ""
 	@echo "Golden eval (correctness) — comparison mode vs the ONNX reference:"
 	@echo "  golden-puregopath-vs-onnx"
@@ -132,9 +133,17 @@ golden-candle-metal: build-candle $(MODEL_SAFETENSORS)
 
 # --- Golden eval: comparison mode vs the ONNX reference (the numbers that go in docs/decision-criteria.md) ---
 
-.PHONY: golden-puregopath-vs-onnx golden-tract-vs-onnx golden-candle-cpu-vs-onnx golden-candle-metal-vs-onnx golden-eval-all
+.PHONY: golden-puregopath-vs-onnx golden-puregopath-vs-onnx-embedded golden-tract-vs-onnx golden-candle-cpu-vs-onnx golden-candle-metal-vs-onnx golden-eval-all
 golden-puregopath-vs-onnx: $(MODEL_SAFETENSORS) $(MODEL_ONNX)
 	$(GOLDENEVAL) -model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-lib $(ONNX_LIB)
+
+# Same comparison, but the ONNX reference is loaded via -onnx-embedded
+# (downloaded+cached, no brew install) instead of -onnx-lib — proves
+# the embedded path (on darwin/amd64: the vendored ortlegacy binding;
+# on darwin/arm64: the live binding) produces the same output as
+# pure-Go, not just the same nDCG/MRR.
+golden-puregopath-vs-onnx-embedded: $(MODEL_SAFETENSORS) $(MODEL_ONNX)
+	$(GOLDENEVAL) -model $(MODEL_SAFETENSORS) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-embedded
 
 golden-tract-vs-onnx: build-tract $(MODEL_ONNX)
 	$(GOLDENEVAL) -sidecar-binary $(TRACT_BINARY) -sidecar-model $(MODEL_ONNX) -tokenizer $(TOKENIZER) -onnx-model $(MODEL_ONNX) -onnx-lib $(ONNX_LIB)

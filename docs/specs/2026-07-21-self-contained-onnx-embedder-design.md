@@ -166,6 +166,67 @@ leaving it as tribal knowledge.
   row(s) should reflect the self-contained path, not the `onnx_test`
   one.
 
+## Implementation outcome (riffle_spikes#24)
+
+Two things worth recording that diverge from what's written above.
+
+### "Written once against a package-local `ort` alias" doesn't compile
+
+The Architecture section's diagram assumed a file could `import ort
+"..."` and have *another* file in the same package see that import.
+Go doesn't work that way — import declarations are file-scoped, not
+package-scoped, so `embedder.go` referencing `ort.X` would need its own
+import of a fixed path, which can't vary by platform. Discovered during
+implementation, not anticipated here.
+
+Two real fixes existed: a thin type-alias/generic-wrapper shim (viable —
+`Shape`, `Value`, `Tensor[T]`, and `DynamicAdvancedSession` are
+structurally identical between the live binding and the vendored one,
+confirmed directly), or duplicating the ~90 lines that actually touch
+ONNX Runtime types (`New`/`Embed`/`Close`) per platform. Discussed with
+the user; duplication was chosen — simpler to read, no indirection, at
+the cost of two copies to keep in sync by hand if either ever changes.
+`clsAndNormalize` (pure math) and `tokenizer.go` (already zero-`ort`)
+stayed shared, since neither needed any shim to begin with — only the
+genuinely ORT-touching code is duplicated
+(`embedder_modern.go`/`embedder_legacy_darwin_amd64.go`).
+
+### A real tar-packaging inconsistency, not a hypothetical one
+
+Microsoft's own release tarballs aren't packaged consistently: v1.23.0's
+`onnxruntime-osx-x86_64-1.23.0.tgz` names its entries with a leading
+`./` (`./onnxruntime-osx-x86_64-1.23.0/lib/....dylib`), while v1.27.1's
+`onnxruntime-osx-arm64-1.27.1.tgz` (used by the darwin/arm64 manifest
+entry since #20) doesn't. `extractTarMember` originally matched entry
+names literally, so the darwin/amd64 entry failed on first real use with
+"not found in archive" despite the member path being correct. Fixed by
+trimming a leading `./` before comparing (`tarextract.go`), with a
+regression test locking in both packaging styles — not special-cased
+per manifest entry, since there was no way to know in advance which
+future releases might be packaged either way.
+
+### Verified for real, on this machine, no hardware blocker
+
+Unlike #20's arm64 gap, everything needed for darwin/amd64 — Intel
+hardware, ONNX Runtime v1.23.0, the vendored `ortlegacy` binding — was
+available on this machine, so this wasn't left partially blocked:
+
+- `make golden-onnx-embedded`: downloads and caches ONNX Runtime
+  v1.23.0 (39,582,416 bytes, matching the manifest exactly), `dlopen`
+  succeeds via `ortlegacy`, nDCG 1.0000 / MRR 1.0000.
+- Second run: cache hit, zero network calls, ~1.4s vs. ~7.7s cold.
+- `make golden-puregopath-vs-onnx-embedded` (new target): cosine
+  similarity 1.000000 against pure-Go on all 5 golden-eval corpus
+  notes — real evidence, not just matching nDCG, that the vendored
+  API-23 backend produces the same output as the live API-25 one
+  (which #23 already separately verified against pure-Go too).
+- `GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build ./...` succeeds
+  cleanly, confirming the build-tag isolation holds in practice — arm64
+  still resolves to the live binding, unaffected by any of this.
+- Real `dlopen`/golden-eval verification on darwin/arm64 itself remains
+  hardware-blocked, unchanged from #20 — that gap was never this
+  ticket's to close.
+
 ## Acceptance criteria
 
 - `bgeembed` exists, imports neither `onnx_test` nor anything under its

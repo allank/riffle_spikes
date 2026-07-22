@@ -18,20 +18,19 @@ type asset struct {
 }
 
 // supportedAssets lists every (GOOS, GOARCH) this package knows how to
-// fetch ONNX Runtime for. Only darwin/arm64 is populated today; sizes
-// and paths confirmed against the real v1.27.1 release asset, not
-// assumed.
+// fetch ONNX Runtime for; sizes and paths confirmed against the real
+// release assets, not assumed.
 //
-// darwin/amd64 (Intel Mac) is deliberately absent, not merely unbuilt:
-// this repo's binding (github.com/yalue/onnxruntime_go v1.29.0) requests
-// ONNX Runtime API version 25 at compile time, and Microsoft's last
-// official osx-x86_64 release (v1.23.0) tops out at API version 23 — the
-// two gaps (no recent osx-x64 build, and no old-enough-API osx-x64
-// build) land on the exact same release boundary (v1.25.0), so no
-// version satisfies both. Supporting Intel Mac needs a second,
-// build-tag-selected backend pinned to an older API version — tracked
-// as a separate ticket, not implemented here. See
-// docs/specs/2026-07-21-embed-onnxruntime-design.md.
+// darwin/amd64 is pinned to v1.23.0 — Microsoft's last official
+// osx-x86_64 release — rather than v1.27.1 like darwin/arm64, because
+// bgeembed links darwin/amd64 against a vendored ONNX Runtime binding
+// (internal/ortlegacy) frozen at API version 23, the max v1.23.0's own
+// C API supports. The live binding used everywhere else requests API
+// 25, which no osx-x86_64 release satisfies — see
+// docs/specs/2026-07-21-self-contained-onnx-embedder-design.md for the
+// full rationale. This pairing (manifest version <-> ortlegacy's
+// compiled API version) isn't checked by the compiler; see
+// api_version_test.go for the guard against them drifting apart.
 var supportedAssets = map[string]asset{
 	"darwin/arm64": {
 		version:       "1.27.1",
@@ -40,6 +39,14 @@ var supportedAssets = map[string]asset{
 		memberPath:    "onnxruntime-osx-arm64-1.27.1/lib/libonnxruntime.1.27.1.dylib",
 		dylibSize:     38_502_216,
 		cacheFilename: "libonnxruntime.1.27.1.dylib",
+	},
+	"darwin/amd64": {
+		version:       "1.23.0",
+		tarballURL:    "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-x86_64-1.23.0.tgz",
+		tarballSize:   11_621_905,
+		memberPath:    "onnxruntime-osx-x86_64-1.23.0/lib/libonnxruntime.1.23.0.dylib",
+		dylibSize:     39_582_416,
+		cacheFilename: "libonnxruntime.1.23.0.dylib",
 	},
 }
 

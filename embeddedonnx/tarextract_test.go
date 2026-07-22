@@ -56,6 +56,27 @@ func TestExtractTarMemberReturnsMatchingMemberContent(t *testing.T) {
 	}
 }
 
+func TestExtractTarMemberMatchesEntryWithLeadingDotSlash(t *testing.T) {
+	// Real-world case, discovered via a genuine mismatch against
+	// Microsoft's actual v1.23.0 osx-x86_64 release: some tarballs'
+	// entries are named "./onnxruntime-.../lib/....dylib" (leading
+	// "./"), unlike v1.27.1's osx-arm64 tarball, which has no such
+	// prefix. memberPath is always given in the clean, no-prefix form;
+	// extractTarMember must match archives packaged either way.
+	want := []byte("the shared library bytes")
+	archive := buildTarGz(t, map[string][]byte{
+		"./onnxruntime-osx-x86_64-1.23.0/lib/libonnxruntime.1.23.0.dylib": want,
+	})
+
+	got, err := extractTarMember(archive, "onnxruntime-osx-x86_64-1.23.0/lib/libonnxruntime.1.23.0.dylib")
+	if err != nil {
+		t.Fatalf("extractTarMember: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("extractTarMember = %q, want %q", got, want)
+	}
+}
+
 func TestExtractTarMemberErrorsWhenMemberAbsent(t *testing.T) {
 	archive := buildTarGz(t, map[string][]byte{
 		"onnxruntime-osx-arm64-1.27.1/README.md": []byte("only this"),
